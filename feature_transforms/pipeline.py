@@ -83,11 +83,12 @@ class ColumnPipeline:
         for tr in self._num_chain:
             num_df = tr.transform(num_df)
         
-        cat_df = df[self._cat_chain]
+        cat_df = df[self._cat_cols]
         for tr in self._cat_chain:
             cat_df = tr.transform(cat_df)
         
-        return pd.concat([num_df, cat_df], axis = 1)
+        out = pd.concat([num_df, cat_df], axis = 1)
+        return out.astype('float32')
     
     def fit_transform(self, df: pd.DataFrame) -> pd.DataFrame:
         return self.fit(df).transform(df)
