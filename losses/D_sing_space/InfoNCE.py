@@ -132,8 +132,8 @@ class INCE(nn.Module):
         
         # Prepare loss dictionary for verbose information
         loss_dict = {
-            'InfoNCE_loss': INCEloss,
-            'kernel_values': k_xa
+            'InfoNCE_loss': torch.mean(INCEloss).item(),
+            'mean of kernel_values': torch.mean(k_xa).item()
         }
         
         return INCEloss, loss_dict
