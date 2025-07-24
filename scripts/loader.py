@@ -12,6 +12,8 @@ import gzip, json
 from pathlib import Path
 from typing import Tuple, Dict
 
+from scripts.openml_split import fetch_data_and_splits
+
 import numpy as np
 import pandas as pd
 
@@ -43,3 +45,14 @@ def load_dataset(tag: str, *, as_numpy: bool = False) -> Tuple[pd.DataFrame, np.
         df.iloc[:, j] = df.iloc[:, j].astype('category')
     
     return df, y, meta
+
+def load_openml_dataset(task_id: int, *, val_ratio: float = 0.1, random_state: int = 0, as_numpy: bool = False):
+    # returns (X, y, meta, split_list)
+    # cached under data/openml_cache/ so every parallel job shares one download
+    cache = DATA_DIR / 'openml_cache'
+    X, y, meta, splits = fetch_data_and_splits(task_id,
+                                                   cache_dir = cache,
+                                                   val_ratio = val_ratio,
+                                                   random_state = random_state)
+    
+    return (X.values if as_numpy else X), y, meta, splits

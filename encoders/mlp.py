@@ -22,6 +22,8 @@ from torch import nn
 
 from utils.registry import register_encoder
 
+import math
+
 def _get_act(name: str) -> Callable[[], nn.Module]:
     name = name.lower()
     if name == 'gelu':

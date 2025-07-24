@@ -12,6 +12,9 @@ dataset:
   tag: openml__iris__59
   # group: cls56
 
+  # fraction of the *official* training fold held-out for validation
+  val_ratio: 0.1 # ignored for non-OpenML data
+
 # feature transforms
 # name: Identity -> no transform
 feature_preprocessing:
