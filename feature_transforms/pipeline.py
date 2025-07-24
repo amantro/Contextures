@@ -65,12 +65,14 @@ class ColumnPipeline:
         self._cat_chain = self._build_chain(self.categorical_specs)
 
         num_df = df[self._num_cols]
-        for tr in self._num_chain:
-            num_df = tr.fit_transform(num_df)
+        if not num_df.empty:
+            for tr in self._num_chain:
+                num_df = tr.fit_transform(num_df)
         
         cat_df = df[self._cat_cols]
-        for tr in self._cat_chain:
-            cat_df = tr.fit_transform(cat_df)
+        if not cat_df.empty:
+            for tr in self._cat_chain:
+                cat_df = tr.fit_transform(cat_df)
         
         self.output_dim = num_df.shape[1] + cat_df.shape[1]
         return self
@@ -80,12 +82,14 @@ class ColumnPipeline:
             raise RuntimeError('ColumnPipeline: call fit() first')
         
         num_df = df[self._num_cols]
-        for tr in self._num_chain:
-            num_df = tr.transform(num_df)
+        if not num_df.empty:
+            for tr in self._num_chain:
+                num_df = tr.transform(num_df)
         
         cat_df = df[self._cat_cols]
-        for tr in self._cat_chain:
-            cat_df = tr.transform(cat_df)
+        if not cat_df.empty:
+            for tr in self._cat_chain:
+                cat_df = tr.transform(cat_df)
         
         out = pd.concat([num_df, cat_df], axis = 1)
         return out.astype('float32')

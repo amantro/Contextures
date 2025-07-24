@@ -9,25 +9,27 @@ global:
 # - tag : single OpenML tag (e.g. openml__iris__59)
 # - group : name in configs/datasets.yaml (e.g. cls56)
 dataset:
-  tag: openml__iris__59
+  tag: openml__mv__4774
   # group: cls56
 
   # fraction of the *official* training fold held-out for validation
-  val_ratio: 0.1 # ignored for non-OpenML data
+  val_ratio: 0.15 # ignored for non-OpenML data
 
 # feature transforms
 # name: Identity -> no transform
 feature_preprocessing:
   # name: Identity
   numeric:
+    - {name: impute, strategy: median}
     - yeo_johnson
   categorical:
+    - {name: impute, strategy: most_frequent}
     - one_hot
 
 # SVDTrainer
 train:
   num_epochs: 20
-  batch_size: 512
+  batch_size: 256
   lr: 1e-3
 
 # Context (one or several - give a list)
@@ -36,7 +38,7 @@ context:
   parameters:
     num_context_samples: 2
     distribution: uniform
-    corruption_rate: 0.2
+    corruption_rate: 0.25
 
 # Encoder (same MLP for x and a)
 encoder:

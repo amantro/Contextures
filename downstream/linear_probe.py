@@ -569,13 +569,13 @@ class LinearProbe:
     Supports both classification (LogisticRegression) and regression (Ridge).
     """
     def __init__(self, 
-                 task_type: Literal["classification", "regression"] = "classification",
+                 task_type: Literal["binary", "classification", "regression"] = "classification",
                  weight_decay: float = 1.0,
                  max_iter: int = 1000,
                  **kwargs):
         self.task_type = task_type
         self.weight_decay = weight_decay
-        if task_type == "classification":
+        if task_type == "classification" or task_type == "binary":
             # C is inverse of regularization strength
             self.model = LogisticRegression(penalty='l2', C=1/weight_decay if weight_decay > 0 else 1e12, max_iter=max_iter, **kwargs)
         else:
@@ -594,7 +594,7 @@ class LinearProbe:
         return self.model.predict(X)
 
     def predict_proba(self, X) -> np.ndarray:
-        if self.task_type != "classification":
+        if self.task_type != "classification" and self.task_type != "binary":
             raise ValueError("predict_proba is only available for classification tasks")
         if not self._is_fitted:
             raise RuntimeError("Linear probe must be fitted before making predictions")
@@ -604,7 +604,7 @@ class LinearProbe:
         y_true = y
         y_pred = self.predict(X)
         metrics = {}
-        if self.task_type == "classification":
+        if self.task_type == "classification" or self.task_type == "binary":
             metrics["accuracy"] = accuracy_score(y_true, y_pred)
         else:
             metrics["r2_score"] = r2_score(y_true, y_pred)
@@ -616,7 +616,7 @@ class LinearProbe:
 def train_linear_probe(
     features: Union[torch.Tensor, ArrayLike, DataFrame],
     targets: Union[torch.Tensor, ArrayLike, DataFrame],
-    task_type: Literal["classification", "regression"] = "classification",
+    task_type: Literal["binary", "classification", "regression"] = "classification",
     test_size: float = 0.2,
     val_size: float = 0.2,
     random_state: int = 42,

@@ -5,6 +5,8 @@ from torch.distributions.uniform import Uniform
 from torch.distributions.normal import Normal
 from pathlib import Path
 
+import numpy as np
+
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -26,39 +28,43 @@ class SCARF(Contexts):
         self.corruption_rate = corruption_rate
         self.uniform_eps = 1e-6
     
-    def fit(self, dataset: DataFrame) -> None:
-        """
-        Fit the SCARF knowledge to the dataset by computing feature bounds.
-        
-        Args:
-            dataset: DataFrame containing the training data
-        """
-        self.context_dim = dataset.shape[1]
-        
-        # Compute feature bounds from the dataset
-        features_low = dataset.min().values
-        features_high = dataset.max().values
-        
-        # Store feature bounds
-        self.features_low = torch.Tensor(features_low)
-        self.features_high = torch.Tensor(features_high)
-        
-        # Initialize marginal distributions based on configuration
-        if self.distribution == 'uniform':
-            self.marginals = Uniform(
-                self.features_low - self.uniform_eps, 
-                self.features_high + self.uniform_eps
-            )
-        elif self.distribution == 'gaussian':
-            mean = (self.features_high + self.features_low) / 2
-            std = (self.features_high - self.features_low) / 4
+    def fit(self, dataset: DataFrame):
+        df = dataset.copy()
+        for col in df.select_dtypes(include="object").columns:
+            df[col] = df[col].astype("category").cat.codes
+        for col in df.select_dtypes(include="category").columns:
+            df[col] = df[col].cat.codes
+
+        num = df.select_dtypes(include=[np.number]).astype(np.float32)
+        if num.empty:
+            raise ValueError("no numeric columns left after conversion")
+
+        self.context_dim = num.shape[1]
+
+        low  = torch.tensor(num.min().values,  dtype=torch.float32)
+        high = torch.tensor(num.max().values,  dtype=torch.float32)
+        self.features_low, self.features_high = low, high
+
+        eps = self.uniform_eps
+        if self.distribution == "uniform":
+            self.marginals = Uniform(low - eps, high + eps)
+
+        elif self.distribution == "gaussian":
+            mean = (high + low) / 2
+            std  = (high - low) / 4
+            std  = torch.where(std == 0, torch.full_like(std, eps), std)
             self.marginals = Normal(mean, std)
-        elif self.distribution == 'bimodal':
-            std = (self.features_high - self.features_low) / 8
-            self.marginals_low = Normal(self.features_low, std)
-            self.marginals_high = Normal(self.features_high, std)
+
+        elif self.distribution == "bimodal":
+            std = (high - low) / 8
+            std = torch.where(std == 0, torch.full_like(std, eps), std)
+            self.marginals_low  = Normal(low,  std)
+            self.marginals_high = Normal(high, std)
+
         else:
             raise NotImplementedError(f"Unsupported prior distribution: {self.distribution}")
+
+        return self
 
     def _sample(self, x: Tensor) -> Tensor:
         """

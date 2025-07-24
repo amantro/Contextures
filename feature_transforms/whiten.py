@@ -33,7 +33,12 @@ class Whitening(BaseTransform):
         cov = np.cov(Xc, rowvar = False)
 
         # eigen-decomp
-        eigvals, eigvecs = np.linalg.eigh(cov)
+        try:
+            eigvals, eigvecs = np.linalg.eigh(cov)
+        except np.linalg.LinAlgError:
+            # add jitter to diagonal entry and retry
+            jitter = 1e-6 * np.trace(cov) / cov.shape[0]
+            eigvals, eigvecs = np.linalg.eigh(cov + np.eye(cov.shape[0]) * jitter)
 
         # build whitening mat
         inv_sqrt = np.diag(1.0 / np.sqrt(eigvals + self.eps))

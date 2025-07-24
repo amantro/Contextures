@@ -25,6 +25,7 @@ from feature_transforms.pipeline import ColumnPipeline
 from utils.registry import get_encoder, get_loss, get_context
 from trainer.trainer import SVDTrainer
 from downstream import run_probe
+from utils.misc import to_f32
 
 from statistics import mean, stdev
 
@@ -102,7 +103,7 @@ def main(cfg: edict) -> None:
         
         # iterate over splits
         for split_id, (tr_idx, va_idx, te_idx) in enumerate(splits_to_run):
-            print(f'   > split #{split_id}    '
+            print(f'   > split {split_id} / {len(splits_to_run)} '
                   f'| train = {len(tr_idx)} val = {len(va_idx)} test = {len(te_idx)}')
             
             # slice dataframes / array
@@ -113,20 +114,20 @@ def main(cfg: edict) -> None:
 
             # feature pipeline
             pipe = build_feature_pipeline(cfg.feature_preprocessing)
-            Xtr = pipe.fit_transform(Xtr_df).to_numpy(dtype = np.float32)
-            Xva = pipe.transform(Xva_df).to_numpy(dtype = np.float32) if Xva_df is not None else None
-            Xte = pipe.transform(Xte_df).to_numpy(dtype = np.float32)
+            Xtr = pipe.fit_transform(Xtr_df)
+            Xva = pipe.transform(Xva_df) if Xva_df is not None else None
+            Xte = pipe.transform(Xte_df)
 
             # context
             CtxCls = get_context(cfg.context.name)
             context = CtxCls(**cfg.context.parameters)
-            context.fit(Xtr_df)
+            context.fit(Xtr)
             context_collate = context.get_collate_fn()
 
             # datasets / loaders
             train_bs = int(cfg['train']['batch_size'])
             def make_loader(X: np.ndarray, *, shuffle = False):
-                x_t = torch.tensor(X, dtype = torch.float32, device = device)
+                x_t = torch.as_tensor(to_f32(X), device = device)
                 ds = TensorDataset(x_t)
                 return DataLoader(ds, batch_size = train_bs, shuffle = shuffle, collate_fn = context_collate)
             
@@ -156,7 +157,7 @@ def main(cfg: edict) -> None:
 
             print('Extracting train/val/test features...')
             def feats(X):
-                t = torch.tensor(X, dtype = torch.float32, device = device)
+                t = torch.as_tensor(to_f32(X), device = device)
                 with torch.no_grad():
                     return x_enc(t).cpu()
                 
