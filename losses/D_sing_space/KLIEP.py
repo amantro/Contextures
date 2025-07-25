@@ -15,10 +15,12 @@ class DKLIEP(nn.Module):
     3. Squared exponential parameterization: K(x,a) = \exp(|| \Phi(x) - \Psi(a) ||^2 / T)   
     """
     def __init__(self, 
+                 # kernel: nn.Module = None,
                  x_proj: nn.Module = None, 
                  a_proj: nn.Module = None,
                  exp_parameterization: Literal["inner_product", "squared"] = None,
                  temperature: float = 1.0,
+                 normalization: float = 0.0,
                  ) -> None:
         """
         Initialize the DKLIEP loss module.
@@ -32,10 +34,12 @@ class DKLIEP(nn.Module):
         - temperature: float, temperature parameter for scaling the kernel values, default is 1.0.
         """
         super(DKLIEP, self).__init__()
+        # self.kernel = kernel
         self.x_proj = x_proj
         self.a_proj = a_proj
         self.exp_parameterization = exp_parameterization
         self.temperature = temperature
+        self.normalization = normalization
 
     def forward(self, x: torch.Tensor, a: torch.Tensor,
                 reduction: Literal["mean", "none"] = "mean",
@@ -59,19 +63,26 @@ class DKLIEP(nn.Module):
                 a = self.a_proj(a.view(N*r, D)).view(N, r, -1)
         N, D = x.shape  # Batch size and embedding dimension
 
-
+        # split a batch and corresponding augmentations into two halves
+        x1, x2 = x.chunk(2, dim=0)
+        a1, a2 = a.chunk(2, dim=0) # in both cases whether a is 2D or 3D
+        # Check the dimensionality of a, and compute the kernel accordingly for both halves
         if a.ndim == 2:
             assert x.shape == a.shape, "Input tensors must have the same shape"
             
-            # Dot products between embeddings
+            # Dot products aka kernel evaluations between embeddings
             if self.exp_parameterization is None:
-                k_xa = x @ a.T # (N, N)
+                k_xa_1 = x1 @ a1.T # (N, N)
+                k_xa_2 = x2 @ a2.T # (N, N)
             elif self.exp_parameterization == "inner_product":
-                k_xa = torch.exp(x @ a.T / self.temparature) # (N, N)
+                k_xa_1 = torch.exp(x1 @ a1.T / self.temparature) # (N, N)
+                k_xa_2 = torch.exp(x2 @ a2.T / self.temparature) # (N, N)
             elif self.exp_parameterization == "squared":
                 # Z[i, j] = exp(|| X[i] - A[j] ||^2 / T)
-                squared_diff = ((x[:, None, :] - a[None, :, :]) ** 2).sum(dim=-1)
-                k_xa = torch.exp(squared_diff / self.temperature) # (N, N)
+                squared_diff_1 = ((x1[:, None, :] - a1[None, :, :]) ** 2).sum(dim=-1)
+                squared_diff_2 = ((x2[:, None, :] - a2[None, :, :]) ** 2).sum(dim=-1)
+                k_xa_1 = torch.exp(squared_diff_1 / self.temperature) # (N, N)
+                k_xa_2 = torch.exp(squared_diff_2 / self.temperature) # (N, N)
             
             """
             # Compute the dot products for positive pairs
@@ -87,31 +98,56 @@ class DKLIEP(nn.Module):
             assert x.shape[1] == a.shape[2], "Input tensors must have the same embedding dimension"
             N, r, D = a.shape
             
-            # Dot products between embeddings
+            # DKernel evaluations for all three parameterizations
             if self.exp_parameterization is None:
-                k_xa = x @ a.view(N, r, D).transpose(1, 2)  # (N, r)
+                # Z[i, j, k] = X[i]^T A[j, k]
+                k_xa_1= torch.einsum('id,jkd->ijk', x1, a1)  # Shape: (N, N, r)
+                k_xa_2= torch.einsum('id,jkd->ijk', x2, a2)  # Shape: (N, N, r)
             elif self.exp_parameterization == "inner_product":
-                k_xa = torch.exp(x @ a.view(N, r, D).transpose(1, 2) / self.temparature)  # (N, r)
+                k_xa_1 = torch.einsum('id,jkd->ijk', x1, a1) / self.temparature  # Shape: (N, N, r)
+                k_xa_1 = torch.exp(k_xa_1)
+                k_xa_2 = torch.einsum('id,jkd->ijk', x2, a2) / self.temparature  # Shape: (N, N, r)
+                k_xa_2 = torch.exp(k_xa_2)
             elif self.exp_parameterization == "squared":
                 # Z[i, j, k] = exp(|| X[i] - A[j, k] ||^2 / T)
-                squared_diff = ((x[:, None, :] - a) ** 2).sum(dim=-1)
-                k_xa = torch.exp(squared_diff / self.temperature)  # (N, r)
+                squared_diff_1 = ((x1[:, None, None, :] - a1[None, :, :, :]) ** 2).sum(dim=-1)  # Shape: (N, N, r)
+                k_xa_1 = torch.exp(squared_diff_1 / self.temperature) # (N, N, r)
+                squared_diff_2 = ((x2[:, None, None, :] - a2[None, :, :, :]) ** 2).sum(dim=-1)  # Shape: (N, N, r)
+                k_xa_2 = torch.exp(squared_diff_2 / self.temperature) # (N, N, r)
 
-        # Compute the kernel values
-        dkliep_loss = - torch.log(k_xa + 1e-8) # This is without normalization penalty on the kernel.
+        # Now we compute the empirical loss according to the expression written in Overleaf
+        # First term: -1/(Br) * sum_i sum_m log(K(x_i, a_{i,m}))
+        # Extract diagonal elements K(x_i, a_{i,m}) for i=1..B, m=1..r
+        diagonal_elements_1 = torch.diagonal(k_xa_1, dim1=0, dim2=1)  # Shape: (r, B)
+        diagonal_elements_1 = diagonal_elements_1.T  # Shape: (B, r), where B is N.
+        diagonal_elements_2 = torch.diagonal(k_xa_2, dim1=0, dim2=1)  # Shape: (r, B)
+        diagonal_elements_2 = diagonal_elements_2.T  # Shape: (B, r)
+    
+        # Compute log and sum
+        log_term = torch.log(diagonal_elements_1).sum()
+        log_term_batch = torch.log(diagonal_elements_1).sum(dim=1)  # Shape: (B,)
+        first_term = -log_term / (N * r)
+        first_term_batch = -log_term_batch / r
+        # Second term: λ * (1/(B²r) * sum_i sum_j sum_m K(x_i, a_{j,m}) - 1)²
+        # Sum over all elements in the tensor
+        total_sum = k_xa_2.sum()
+        constraint_violation = total_sum / (N * N * r) - 1
+        second_term = self.normalization * (constraint_violation ** 2)
+    
+    #return first_term + second_term
         # Normalization typically requires samples of the form (x_i, a_{j,m}) i.e., contexts sampled from different distributions.
         # Compute the loss based on the kernel values
         if reduction == "mean":
-            dkliep_loss = k_xa.mean()
-        elif reduction == "none":
-            dkliep_loss = k_xa
+            dkliep_loss = first_term + second_term
+        elif reduction == "none": # What do I return here?
+            dkliep_loss = first_term_batch
         else:
             raise ValueError("Reduction must be 'mean' or 'none'.")
         
         # Prepare loss dictionary for verbose information
         loss_dict = {
-            'dkliep_loss': dkliep_loss,
-            'kernel_values': k_xa
+            'dkliep_loss': (first_term + second_term).item(),
+            'kernel_values': torch.mean(k_xa_1).item()
         }
         
         return dkliep_loss, loss_dict
